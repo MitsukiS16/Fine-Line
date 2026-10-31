@@ -28,8 +28,15 @@
   .frame img, .frame svg { display: block; max-width: 100%; max-height: 100%; width: auto; height: 100%; object-fit: contain; }
   #paper { transition: background .15s; }
   #status { position: absolute; right: 10px; bottom: 10px; padding: 3px 10px; border-radius: 99px;
-            background: var(--ink); color: #fff; font-size: 13px; visibility: hidden; }
+            background: var(--ink); color: #fff; font-size: 13px; visibility: hidden; white-space: pre-line; }
   #status.on { visibility: visible; }
+  #status.big { inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+                padding: 16px; border-radius: 0; background: rgba(255, 255, 255, .9); color: var(--ink);
+                font-size: 24px; font-weight: 500; line-height: 1.3; text-align: center; }
+  #status.big::before { content: ""; width: 44px; height: 44px; margin-bottom: 16px; border-radius: 50%;
+                        border: 3px solid var(--line); border-top-color: var(--ink); animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { #status.big::before { animation: none; } }
 
   .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px 24px; margin-top: 12px; }
   label { display: block; font-size: 14px; }
@@ -50,11 +57,28 @@
   .swatch[aria-pressed=true] { outline: 2px solid var(--ink); outline-offset: 2px; }
   #error { margin: 0; color: #a32a1c; }
   #error:not(:empty) { margin-bottom: 8px; }
-  @media (max-width: 960px) { .controls { grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 720px) {
-    .panels, .controls { grid-template-columns: 1fr; }
-    .frame { height: 60vh; }
+  @media (max-width: 960px) {
+    .controls { grid-template-columns: 1fr 1fr; }
+    .frame { height: clamp(220px, calc(100vh - 470px), 640px); }
   }
+  @media (max-width: 720px) {
+    main { padding: 12px; }
+    .panels, .controls { grid-template-columns: 1fr; }
+    /* The drawing comes first on phones, with the original as a small reference. */
+    .panels figure:last-child { order: -1; }
+    #paper { height: 62vh; }
+    #original { object-fit: contain; }
+    .panels figure:first-child .frame { height: 26vh; }
+    #drop { min-height: 50vh; }
+    input[type=range] { height: 32px; }
+    button { min-height: 46px; }
+    .swatch { width: 42px; height: 42px; min-height: 0; }
+    .swatches { width: 100%; }
+    .actions button:not(.swatch) { flex: 1 1 100%; }
+    label.switch input { width: 24px; height: 24px; }
+    label.switch { margin-bottom: 8px; font-size: 16px; }
+  }
+  @media (hover: none) { #dropHint { display: none; } }
 </style>
 </head>
 <body>
@@ -66,7 +90,7 @@
 
   <div id="drop" role="button" tabindex="0">
     <strong>Choose an image</strong>
-    <span>or drop it here, or paste it</span>
+    <span id="dropHint">or drop it here, or paste it</span>
   </div>
   <p id="error" role="alert"></p>
   <input id="file" type="file" accept="image/*" hidden>
@@ -142,12 +166,14 @@ let size = null, strokes = [], name = 'fine-line', paper = '#ffffff';
 let latestId = 0, busy = false, queued = null, grayPending = null, lineMapPending = null;
 let aiBusy = false, loadToken = 0;
 
-const AI_SIDE = 1024;
+// Going above 1024 costs far more time and memory without better drawings.
+// Small screens use less because phones have little memory to spare.
+const AI_SIDE = Math.min(screen.width, screen.height) < 600 ? 768 : 1024;
 let aiWorker = null, aiJob = 0;
 
 function loadAiBundle() {
   return new Promise((resolve, reject) => {
-    if (window.AI_BUNDLE) return resolve();
+    if (aiWorker) return resolve();
     const s = document.createElement('script');
     s.src = 'ai-bundle.js';
     s.onload = resolve;
@@ -184,7 +210,12 @@ function startAiWorker() {
 // Returns the model's drawing as darkness (0 = paper, 1 = ink), sized w by h.
 async function aiLineMap(img, w, h) {
   await loadAiBundle();
-  aiWorker = aiWorker || startAiWorker();
+  let engine = {};
+  if (!aiWorker) {
+    aiWorker = startAiWorker();
+    engine = { wasm: AI_BUNDLE.wasm, model: AI_BUNDLE.model };
+    window.AI_BUNDLE = null;   // the worker keeps its own copy; free this one
+  }
   const fit = AI_SIDE / Math.max(w, h);
   const aw = Math.max(8, Math.round(w * fit / 8) * 8), ah = Math.max(8, Math.round(h * fit / 8) * 8);
   const canvas = document.createElement('canvas');
@@ -207,7 +238,7 @@ async function aiLineMap(img, w, h) {
       data.failed ? reject(new Error(data.failed)) : resolve(data.out);
     };
     aiWorker.onerror = reject;
-    aiWorker.postMessage({ id, rgb, w: aw, h: ah, wasm: AI_BUNDLE.wasm, model: AI_BUNDLE.model }, [rgb.buffer]);
+    aiWorker.postMessage({ id, rgb, w: aw, h: ah, ...engine }, [rgb.buffer]);
   });
   const map = new Float32Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
@@ -221,7 +252,9 @@ async function aiLineMap(img, w, h) {
 
 function showStatus(on) {
   $('status').classList.toggle('on', on);
-  $('status').textContent = aiBusy ? 'AI is drawing, about 30 seconds…' : 'Drawing…';
+  const big = aiBusy || !strokes.length;
+  $('status').classList.toggle('big', on && big);
+  $('status').textContent = big ? 'The AI is drawing…\nThis can take up to 2 minutes' : 'Drawing…';
   for (const b of [$('savePng'), $('saveSvg')]) b.disabled = on;
 }
 
