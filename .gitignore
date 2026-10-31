@@ -1,0 +1,3 @@
+# Test images: not ours to publish, and the site doesn't need them
+tests/
+mae-teste*.jpg
