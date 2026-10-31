@@ -46,4 +46,4 @@ No installation or server is needed. `index.html`, `fineline.js` and `ai-bundle.
 
 - Line-art model: [Informative Drawings](https://github.com/carolineec/informative-drawings) by Caroline Chan et al. (MIT License), using the [ONNX conversion by rocca](https://huggingface.co/rocca/informative-drawings-line-art-onnx)
 - AI engine: [ONNX Runtime Web](https://github.com/microsoft/onnxruntime) 1.17.3 by Microsoft (MIT License)
-# Fine-Line
+
